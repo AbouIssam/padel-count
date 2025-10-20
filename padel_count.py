@@ -1,17 +1,17 @@
 import math
 import csv
 import io
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo  # Python 3.9+
 import streamlit as st
 
 # ---------- Page ----------
-st.set_page_config(page_title="🎾 Padel Charges (AED, GST, History + Edit)", page_icon="🎾", layout="centered")
+st.set_page_config(page_title="🎾 Padel Charges (AED, History + Edit)", page_icon="🎾", layout="centered")
 st.title("🎾 Padel Charges Calculator — AED")
 st.caption(
     "2h game basis. Each participant can join 2h (full) or 1h (half). "
     "Rookies & Juniors share the same discount, but Juniors are free and their share is paid by their attached Veteran. "
-    "Rounding favors rookies; veterans absorb ±1 to reach the exact total. GST-aware scheduling with history, edit, and delete."
+    "Rounding favors rookies; veterans absorb ±1 to reach the exact total. History with edit/delete and CSV export."
 )
 
 AED = "AED"
@@ -78,7 +78,6 @@ def compute_split_per_person(paying, total, discount_pct, extra_weight=None):
     total: AED total for the 2h game
     discount_pct: rookies & juniors discount (0..99)
     extra_weight: dict veteran_name -> extra weight (already scaled by (1 - d))
-                 NOTE: pass discounted junior weights pre-multiplied by (1-d).
     """
     P = max(0.0, float(total))
     d = min(0.99, max(0.0, float(discount_pct) / 100.0))
@@ -153,21 +152,19 @@ def export_history_csv(history):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "timestamp_saved_gst", "start_gst", "end_gst",
+        "timestamp_saved_gst",
         "game_total_AED", "discount_pct", "weights_W", "paid_total_AED",
         "name", "role", "hours", "amount_AED", "attached_to"
     ])
     for rec in history:
         ts = rec.get("timestamp_saved_gst", "")
-        start = rec.get("start_gst", "")
-        end = rec.get("end_gst", "")
         total = rec["total"]
         disc = rec["discount_pct"]
         W = rec["W"]
         paid = rec["paid_total"]
         for p in rec["participants"]:
             writer.writerow([
-                ts, start, end,
+                ts,
                 total, disc, W, paid,
                 p["name"], p["role"], p["hours"], p["amount"], p.get("attached_to", "")
             ])
@@ -179,8 +176,6 @@ def start_edit_from_record(rec_index):
     pre = {
         "game_total": rec["total"],
         "discount_pct": rec["discount_pct"],
-        "start_gst": rec.get("start_gst"),  # ISO string
-        "end_gst": rec.get("end_gst"),
         "vets": {p["name"]: p["hours"] for p in rec["participants"] if p["role"] == "vet"},
         "rooks": {p["name"]: p["hours"] for p in rec["participants"] if p["role"] == "rookie"},
         "juniors": {p["name"]: p["hours"] for p in rec["participants"] if p["role"] == "junior"},
@@ -191,21 +186,13 @@ def start_edit_from_record(rec_index):
     st.rerun()
 
 def apply_prefill_to_widgets():
-    """Before rendering widgets, set default values when editing (incl. GST date/time)."""
+    """Before rendering widgets, set default values when editing."""
     pre = st.session_state.prefill
     if not pre:
         return
     # Numbers
     st.session_state.setdefault("game_total", pre["game_total"])
     st.session_state.setdefault("d_pct", pre["discount_pct"])
-    # GST datetime
-    if pre.get("start_gst"):
-        try:
-            dt = datetime.fromisoformat(pre["start_gst"]).astimezone(GST_TZ)
-            st.session_state.setdefault("game_date_gst", dt.date())
-            st.session_state.setdefault("game_time_gst", dt.time().replace(second=0, microsecond=0))
-        except Exception:
-            pass
     # Participants
     for name in VETERANS:
         st.session_state[f"v_sel_{name}"] = name in pre["vets"]
@@ -222,20 +209,12 @@ apply_prefill_to_widgets()
 
 # ---------- Sidebar: Game setup ----------
 with st.sidebar:
-    st.header("⚙️ Game Setup (2h basis, GST Time)")
+    st.header("⚙️ Game Setup (2h basis)")
 
-    # GST date & start time pickers
-    now_gst = datetime.now(GST_TZ)
-    default_date = st.session_state.get("game_date_gst", now_gst.date())
-    default_time = st.session_state.get("game_time_gst", now_gst.time().replace(second=0, microsecond=0))
-
-    game_date_gst = st.date_input("📅 Game date (GST)", value=default_date, key="game_date_gst")
-    game_time_gst = st.time_input("🕒 Start time (GST)", value=default_time, key="game_time_gst", step=300)
-
-    # Total & discount
+    # Default game total is **AED 300**
     game_total = st.number_input(
         "💰 Game total for 2 hours (AED)",
-        min_value=0.0, step=10.0, value=st.session_state.get("game_total", 600.0), key="game_total"
+        min_value=0.0, step=10.0, value=st.session_state.get("game_total", 300.0), key="game_total"
     )
     d_pct = st.number_input(
         "🏷️ Discount for Rookies & Juniors (%)",
@@ -302,21 +281,12 @@ res = compute_split_per_person(paying=paying, total=game_total, discount_pct=d_p
 per_person = res["per_person"]
 paid_total = res["sum"]
 
-# ---------- Compute GST start/end strings ----------
-start_dt_gst = datetime.combine(st.session_state["game_date_gst"], st.session_state["game_time_gst"]).replace(tzinfo=GST_TZ)
-end_dt_gst = start_dt_gst + timedelta(hours=2)  # game basis 2h
-start_label = start_dt_gst.strftime("%Y-%m-%d %H:%M GST")
-end_label   = end_dt_gst.strftime("%Y-%m-%d %H:%M GST")
-
 # ---------- Tabs ----------
 tab_game, tab_history = st.tabs(["🎮 Current Game", "🗂️ History"])
 
 with tab_game:
     if st.session_state.edit_index is not None:
         st.info(f"Editing saved game #{st.session_state.edit_index + 1}. Changes will overwrite that entry.")
-
-    st.subheader("🕒 Schedule (GST)")
-    st.write(f"**Start:** {start_label}  •  **End:** {end_label}")
 
     st.subheader("📊 Per-person amounts — integers in AED")
     cA, cB, cC = st.columns(3)
@@ -369,8 +339,6 @@ with tab_game:
             if st.button("✅ Validate & Save to History", type="primary", disabled=not can_save):
                 record = {
                     "timestamp_saved_gst": datetime.now(GST_TZ).strftime("%Y-%m-%d %H:%M:%S GST"),
-                    "start_gst": start_dt_gst.isoformat(),
-                    "end_gst": end_dt_gst.isoformat(),
                     "total": int(round(res["P"])),
                     "discount_pct": float(d_pct),
                     "W": float(res["W"]),
@@ -402,8 +370,6 @@ with tab_game:
                 idx = st.session_state.edit_index
                 record = {
                     "timestamp_saved_gst": st.session_state.history[idx]["timestamp_saved_gst"],  # keep original
-                    "start_gst": start_dt_gst.isoformat(),
-                    "end_gst": end_dt_gst.isoformat(),
                     "total": int(round(res["P"])),
                     "discount_pct": float(d_pct),
                     "W": float(res["W"]),
@@ -444,15 +410,7 @@ with tab_history:
         # Latest first for display; keep original indices for edit/delete
         for disp_idx, rec in enumerate(reversed(history), 1):
             real_idx = len(history) - disp_idx
-            # Human labels for GST times
-            start_lbl = end_lbl = ""
-            try:
-                start_lbl = datetime.fromisoformat(rec.get("start_gst")).astimezone(GST_TZ).strftime("%Y-%m-%d %H:%M GST")
-                end_lbl   = datetime.fromisoformat(rec.get("end_gst")).astimezone(GST_TZ).strftime("%Y-%m-%d %H:%M GST")
-            except Exception:
-                pass
-
-            header = f"#{real_idx + 1} • {rec.get('timestamp_saved_gst','')} • Start {start_lbl} • End {end_lbl} • Total {aed(rec['total'])} • Discount {rec['discount_pct']}%"
+            header = f"#{real_idx + 1} • Saved {rec.get('timestamp_saved_gst','')} • Total {aed(rec['total'])} • Discount {rec['discount_pct']}%"
             with st.expander(header):
                 st.write(f"**Paid total**: {aed(rec['paid_total'])}  •  **Weights W**: {rec['W']:.3f}")
                 st.markdown("**Participants**")
@@ -494,4 +452,4 @@ with tab_history:
             st.warning("All history cleared.")
 
 # Footer
-st.caption("✅ GST-aware scheduling; juniors free and covered by their veteran; rookies favored in rounding; history with edit/delete and CSV export.")
+st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
