@@ -1,9 +1,9 @@
 import math
 import streamlit as st
 
-st.set_page_config(page_title="🎾 Padel Split (AED, Rookies-Favored)", page_icon="🎾", layout="centered")
+st.set_page_config(page_title="🎾 Padel Charges (AED, Rookies-Favored)", page_icon="🎾", layout="centered")
 
-st.title("🎾 Padel Split Calculator — AED")
+st.title("🎾 Padel Charges Calculator — AED")
 st.caption("Amounts shown in AED (dirhams). Integer per-person amounts with rounding that favors rookies. Exact total kept via minimal ±1 adjustments (veterans absorb first).")
 
 AED = "AED"
@@ -15,10 +15,10 @@ def aed(x: int | float) -> str:
     except Exception:
         return f"{AED} {x}"
 
-def compute_split(n_r: int, n_v: int, total: float, discount_pct: float):
+def compute_split(n_r: float, n_v: float, total: float, discount_pct: float):
     # sanitize
-    n_r = max(0, int(n_r))
-    n_v = max(0, int(n_v))
+    n_r = max(0, float(n_r))
+    n_v = max(0, float(n_v))
     P = max(0.0, float(total))
     d = min(0.99, max(0.0, float(discount_pct) / 100.0))
 
