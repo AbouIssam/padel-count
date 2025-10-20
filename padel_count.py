@@ -65,10 +65,10 @@ def compute_split(n_r: float, n_v: float, total: float, discount_pct: float):
 
 with st.sidebar:
     st.header("⚙️ Inputs")
-    n_r = st.number_input("🌱 Number of rookies", min_value=0, step=1, value=1)
+    n_r = st.number_input("🌱 Number of rookies", min_value=0, step=1, value=3)
     n_v = st.number_input("🛡️ Number of veterans", min_value=0, step=1, value=3)
-    P = st.number_input("💰 Total amount (AED)", min_value=0.0, step=1.0, value=200.0)
-    d_pct = st.number_input("🏷️ Rookie discount (%)", min_value=0.0, max_value=99.0, step=1.0, value=20.0)
+    P = st.number_input("💰 Total amount (AED)", min_value=0.0, step=1.0, value=300.0)
+    d_pct = st.number_input("🏷️ Rookie discount (%)", min_value=0.0, max_value=99.0, step=1.0, value=30.0)
 
 res = compute_split(n_r, n_v, P, d_pct)
 
