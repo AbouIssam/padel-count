@@ -127,7 +127,7 @@ def compute_split_per_person(paying, total, discount_pct, extra_weight=None):
 # ---------- Sidebar: Game setup ----------
 with st.sidebar:
     st.header("⚙️ Game Setup (2h basis)")
-    game_total = st.number_input("💰 Game total for 2 hours (AED)", min_value=0.0, step=10.0, value=600.0)
+    game_total = st.number_input("💰 Game total for 2 hours (AED)", min_value=0.0, step=10.0, value=300.0)
     d_pct = st.number_input("🏷️ Discount for Rookies & Juniors (%)", min_value=0.0, max_value=99.0, step=5.0, value=30.0)
 
     st.markdown("---")
