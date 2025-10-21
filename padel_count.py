@@ -692,20 +692,20 @@ with tab_charts:
                 ).properties(width="container", height=320)
                 st.altair_chart(c2, use_container_width=True)
 
-            # ===== 3) Share of total paid (%) — robust: aggregate directly from history =====
+            # ===== 3) Share of total paid (%) — simple, robust donut =====
             st.markdown("**3) Share of total paid (%) — veterans & rookies**")
             
             import pandas as pd
             import altair as alt
             
-            # Build aggregated sums per participant from raw history (vets+rookies only)
+            # Aggregate directly from history (vets+rookies only, amounts > 0)
             agg = {}
             for rec in st.session_state.history:
                 for p in rec.get("participants", []):
                     role = p.get("role")
                     if role not in ("vet", "rookie"):
                         continue
-                    name = p.get("name", "")
+                    name = str(p.get("name", ""))
                     amt  = int(p.get("amount", 0) or 0)
                     if amt <= 0:
                         continue
@@ -719,28 +719,37 @@ with tab_charts:
             if df_share.empty or df_share["PaidTotal"].fillna(0).sum() <= 0:
                 st.info("No non-zero payments to display yet. Save a game where at least one veteran/rookie pays > 0 AED.")
             else:
-                total_paid_sum = float(df_share["PaidTotal"].sum())
-                df_share["share_pct"] = 100.0 * df_share["PaidTotal"] / total_paid_sum
+                # Ensure correct dtypes
+                df_share["Participant"] = df_share["Participant"].astype(str)
+                df_share["RoleName"]    = df_share["RoleName"].astype(str)
+                df_share["PaidTotal"]   = pd.to_numeric(df_share["PaidTotal"], errors="coerce").fillna(0)
             
-                donut = alt.Chart(df_share).mark_arc(innerRadius=60).encode(
-                    theta=alt.Theta("share_pct:Q", title="Share (%)"),
-                    color=alt.Color("Participant:N", legend=None),
+                donut = alt.Chart(df_share).mark_arc(innerRadius=70, outerRadius=140).encode(
+                    theta=alt.Theta("PaidTotal:Q", title="Paid (AED)"),  # let Vega compute shares
+                    color=alt.Color("Participant:N", legend=alt.Legend(title="Participant")),
                     tooltip=[
                         alt.Tooltip("Participant:N"),
                         alt.Tooltip("RoleName:N", title="Role"),
                         alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f"),
-                        alt.Tooltip("share_pct:Q", title="Share (%)", format=".1f"),
                     ],
-                ).properties(width=340, height=340)
+                ).properties(width=380, height=380)
             
-                legend = alt.Chart(df_share).mark_rect().encode(
-                    y=alt.Y("Participant:N", sort="-x", axis=alt.Axis(title=None)),
-                    color=alt.Color("Participant:N", legend=None),
-                ).properties(width=20, height=340)
+                # render with fixed size (some setups ignore container width on arcs)
+                st.altair_chart(donut, use_container_width=False)
             
-                st.altair_chart(alt.hconcat(donut, legend), use_container_width=True)
+                # Optional: fallback bar if the environment still refuses to render arcs
+                try:
+                    pass  # donut rendered above
+                except Exception:
+                    st.warning("Donut not supported here — showing a bar chart instead.")
+                    bar = alt.Chart(df_share).mark_bar().encode(
+                        x=alt.X("Participant:N", sort="-y"),
+                        y=alt.Y("PaidTotal:Q", title="Paid (AED)"),
+                        color=alt.Color("RoleName:N", title="Role"),
+                        tooltip=["Participant:N", "RoleName:N", alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f")],
+                    ).properties(width="container", height=320)
+                    st.altair_chart(bar, use_container_width=True)
             
-                # Optional small table for sanity check
                 with st.expander("🔎 Data used for donut"):
                     st.dataframe(df_share.sort_values("PaidTotal", ascending=False), hide_index=True, use_container_width=True)
 
