@@ -605,84 +605,86 @@ with tab_charts:
 
         rows = compute_statistics(history)
         df = pd.DataFrame(rows)
+
         if df.empty:
             st.info("No data to chart.")
         else:
-            # Normalisations & titres
+            # --- Prépare les colonnes utilisées par les graphes ---
             role_name = {"vet": "Veteran", "rookie": "Rookie", "junior": "Junior"}
-            df["RoleName"] = df["role"].map(role_name)
+            df["Participant"] = df["name"]
+            df["RoleName"]    = df["role"].map(role_name)
+            df["PaidTotal"]   = df["paid_total"].astype(int)
+            df["HoursSelf"]   = df["hours_self"].astype(int)
+            df["HoursJuniors"]= df["hours_juniors"].astype(int)
 
-            # ===== Chart 1 : Paid total by participant (barres) =====
+            # ===== 1) Paid total (AED) by participant =====
             st.markdown("**1) Paid total (AED) by participant**")
             c1 = alt.Chart(df).mark_bar().encode(
                 x=alt.X("Participant:N", sort="-y", title="Participant"),
-                y=alt.Y("Paid total (AED):Q", title="Paid total (AED)"),
+                y=alt.Y("PaidTotal:Q", title="Paid total (AED)"),
                 color=alt.Color("RoleName:N", title="Role"),
                 tooltip=[
                     alt.Tooltip("Participant:N"),
                     alt.Tooltip("RoleName:N", title="Role"),
-                    alt.Tooltip("Paid total (AED):Q", format=",.0f")
-                ]
+                    alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f"),
+                ],
             ).properties(width="container", height=320)
             st.altair_chart(c1, use_container_width=True)
 
-            # ===== Chart 2 : Heures (self vs juniors) pour les VETERANS (barres empilées) =====
+            # ===== 2) Hours for veterans — self vs juniors (stacked) =====
             st.markdown("**2) Hours for veterans — self vs juniors (stacked)**")
             df_v = df[df["role"] == "vet"].copy()
             if df_v.empty:
                 st.info("No veteran data to chart.")
             else:
                 df_v_m = df_v.melt(
-                    id_vars=["name"],
-                    value_vars=["hours_self", "hours_juniors"],
+                    id_vars=["Participant"],
+                    value_vars=["HoursSelf", "HoursJuniors"],
                     var_name="HoursType",
-                    value_name="Hours"
+                    value_name="Hours",
                 )
-                df_v_m["Participant"] = df_v_m["name"]
                 df_v_m["HoursType"] = df_v_m["HoursType"].map({
-                    "hours_self": "Self",
-                    "hours_juniors": "Juniors"
+                    "HoursSelf": "Self",
+                    "HoursJuniors": "Juniors",
                 })
                 c2 = alt.Chart(df_v_m).mark_bar().encode(
                     x=alt.X("Participant:N", sort="-y"),
                     y=alt.Y("Hours:Q", title="Total hours"),
                     color=alt.Color("HoursType:N", title="Type"),
-                    order=alt.Order("HoursType:N"),
                     tooltip=[
                         alt.Tooltip("Participant:N"),
                         alt.Tooltip("HoursType:N", title="Type"),
-                        alt.Tooltip("Hours:Q", format=",.0f")
-                    ]
+                        alt.Tooltip("Hours:Q", format=",.0f"),
+                    ],
                 ).properties(width="container", height=320)
                 st.altair_chart(c2, use_container_width=True)
 
-            # ===== Chart 3 : Part du total payé (pourcentage) =====
+            # ===== 3) Share of total paid (%) (donut) =====
             st.markdown("**3) Share of total paid (%)**")
-            total_paid_sum = df["paid_total"].sum()
+            total_paid_sum = float(df["PaidTotal"].sum())
             if total_paid_sum <= 0:
                 st.info("No paid amounts to chart.")
             else:
-                df_share = df[["name", "paid_total", "RoleName"]].copy()
-                df_share["share_pct"] = 100.0 * df_share["paid_total"] / total_paid_sum
-                df_share["Participant"] = df_share["name"]
-                c3 = alt.Chart(df_share).mark_arc(innerRadius=60).encode(
-                    theta=alt.Theta("share_pct:Q", stack=True, title="Share %"),
+                df_share = df[["Participant", "RoleName", "PaidTotal"]].copy()
+                df_share["share_pct"] = 100.0 * df_share["PaidTotal"] / total_paid_sum
+
+                donut = alt.Chart(df_share).mark_arc(innerRadius=60).encode(
+                    theta=alt.Theta("share_pct:Q", title="Share (%)"),
                     color=alt.Color("Participant:N", legend=None),
                     tooltip=[
                         alt.Tooltip("Participant:N"),
                         alt.Tooltip("RoleName:N", title="Role"),
-                        alt.Tooltip("paid_total:Q", title="Paid (AED)", format=",.0f"),
-                        alt.Tooltip("share_pct:Q", title="Share (%)", format=".1f")
-                    ]
+                        alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f"),
+                        alt.Tooltip("share_pct:Q", title="Share (%)", format=".1f"),
+                    ],
                 ).properties(width=340, height=340)
 
-                # Légende à part pour visibilité
-                c3_legend = alt.Chart(df_share).mark_rect().encode(
+                legend = alt.Chart(df_share).mark_rect().encode(
                     y=alt.Y("Participant:N", sort="-x", axis=alt.Axis(title=None)),
-                    color=alt.Color("Participant:N", legend=None)
+                    color=alt.Color("Participant:N", legend=None),
                 ).properties(width=20, height=340)
 
-                st.altair_chart(alt.hconcat(c3, c3_legend).resolve_legend(color="independent"), use_container_width=True)
+                st.altair_chart(alt.hconcat(donut, legend), use_container_width=True)
 
 # Footer
 st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
