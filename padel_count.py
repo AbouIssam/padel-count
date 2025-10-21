@@ -641,33 +641,30 @@ with tab_charts:
             
                 st.altair_chart(c1, use_container_width=True)
 
-            # ===== 2) Hours — self vs juniors (stacked) for veterans AND rookies =====
-            st.markdown("**2) Hours — self vs juniors (stacked, veterans & rookies)**")
-            df_nr = df[df["role"].isin(["vet", "rookie"])].copy()
-            if df_nr.empty:
-                st.info("No veteran/rookie data to chart.")
+            # ===== 2) Hours per participant (no stacking; juniors shown separately) =====
+            st.markdown("**2) Hours per participant**")
+            
+            df_hours = df.copy()
+            # Use each participant's own hours only
+            df_hours = df_hours[["Participant", "RoleName", "HoursSelf"]]
+            
+            if df_hours.empty or df_hours["HoursSelf"].fillna(0).sum() == 0:
+                st.info("No hours to display yet.")
             else:
-                df_nr_m = df_nr.melt(
-                    id_vars=["Participant", "RoleName"],
-                    value_vars=["HoursSelf", "HoursJuniors"],
-                    var_name="HoursType",
-                    value_name="Hours",
-                )
-                df_nr_m["HoursType"] = df_nr_m["HoursType"].map({
-                    "HoursSelf": "Self",
-                    "HoursJuniors": "Juniors",
-                })
-                c2 = alt.Chart(df_nr_m).mark_bar().encode(
-                    x=alt.X("Participant:N", sort="-y", title="Participant"),
-                    y=alt.Y("Hours:Q", title="Total hours"),
-                    color=alt.Color("HoursType:N", title="Type"),
+                import altair as alt
+                c2 = alt.Chart(df_hours).mark_bar().encode(
+                    x=alt.X("Participant:N",
+                            sort=alt.SortField(field="HoursSelf", op="sum", order="descending"),
+                            title="Participant"),
+                    y=alt.Y("HoursSelf:Q", title="Hours (self)"),
+                    color=alt.Color("RoleName:N", title="Role"),
                     tooltip=[
                         alt.Tooltip("Participant:N"),
                         alt.Tooltip("RoleName:N", title="Role"),
-                        alt.Tooltip("HoursType:N", title="Type"),
-                        alt.Tooltip("Hours:Q", format=",.0f"),
+                        alt.Tooltip("HoursSelf:Q", title="Hours (self)", format=",.0f"),
                     ],
                 ).properties(width="container", height=320)
+            
                 st.altair_chart(c2, use_container_width=True)
 
             # ===== 3) Share of total paid (%) — simple, robust donut =====
