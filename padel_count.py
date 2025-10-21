@@ -617,19 +617,20 @@ with tab_charts:
             df["HoursSelf"]   = df["hours_self"].astype(int)
             df["HoursJuniors"]= df["hours_juniors"].astype(int)
 
-            # ===== 1) Paid total (AED) — self vs juniors (stacked) =====
+           # ===== 1) Paid total (AED) — self vs juniors (stacked) =====
             st.markdown("**1) Paid total (AED) — self vs juniors (stacked)**")
             
             df_payers = df[df["role"].isin(["vet", "rookie"])].copy()
-            if df_payers.empty or df_payers["PaidTotal"].sum() == 0:
+            if df_payers.empty or df_payers["PaidTotal"].fillna(0).sum() == 0:
                 st.info("No non-zero payments yet among veterans/rookies.")
             else:
-                # Junior share is only for veterans; rookies have 0
-                df_payers["JuniorShare"] = 0
-                if "junior_paid_share" in df_payers.columns:
-                    df_payers.loc[df_payers["role"] == "vet", "JuniorShare"] = (
-                        df_payers.loc[df_payers["role"] == "vet", "junior_paid_share"].astype(int)
-                    )
+                # JuniorShare only for veterans; rookies = 0
+                df_payers["JuniorShare"] = (
+                    df_payers.get("junior_paid_share", 0)
+                    .where(df_payers["role"] == "vet", 0)
+                    .fillna(0)
+                    .astype(int)
+                )
                 df_payers["PaidSelf"] = (df_payers["PaidTotal"] - df_payers["JuniorShare"]).clip(lower=0).astype(int)
             
                 # Long format for stacked bars
@@ -641,10 +642,17 @@ with tab_charts:
                 )
                 df_m["Portion"] = df_m["Portion"].map({"PaidSelf": "Self", "JuniorShare": "Juniors"})
             
+                import altair as alt
                 c1 = alt.Chart(df_m).mark_bar().encode(
                     x=alt.X("Participant:N", sort="-y", title="Participant"),
                     y=alt.Y("AED:Q", title="Paid total (AED)"),
-                    color=alt.Color("Portion:N", title="Portion"),  # stacked Self + Juniors
+                    color=alt.Color(
+                        "Portion:N",
+                        title="Portion",
+                        # optional fixed palette for consistency
+                        scale=alt.Scale(domain=["Self", "Juniors"], range=["#4f46e5", "#a78bfa"]),
+                    ),
+                    order=alt.Order("Portion:N"),
                     tooltip=[
                         alt.Tooltip("Participant:N"),
                         alt.Tooltip("RoleName:N", title="Role"),
@@ -652,8 +660,8 @@ with tab_charts:
                         alt.Tooltip("AED:Q", title="AED", format=",.0f"),
                     ],
                 ).properties(width="container", height=320)
+            
                 st.altair_chart(c1, use_container_width=True)
-
 
             # ===== 2) Hours — self vs juniors (stacked) for veterans AND rookies =====
             st.markdown("**2) Hours — self vs juniors (stacked, veterans & rookies)**")
@@ -684,11 +692,16 @@ with tab_charts:
                 ).properties(width="container", height=320)
                 st.altair_chart(c2, use_container_width=True)
 
-            # ===== 3) Share of total paid (%) — veterans & rookies only, with fallback =====
+            # ===== 3) Share of total paid (%) — robust donut =====
             st.markdown("**3) Share of total paid (%) — veterans & rookies**")
             
-            def render_donut(df_share):
-                total_paid_sum = float(df_share["PaidTotal"].sum())
+            import pandas as pd
+            import altair as alt
+            
+            def render_donut_from_df(df_share: pd.DataFrame) -> bool:
+                if df_share.empty:
+                    return False
+                total_paid_sum = float(df_share["PaidTotal"].fillna(0).sum())
                 if total_paid_sum <= 0:
                     return False
                 df_share = df_share.copy()
@@ -713,29 +726,27 @@ with tab_charts:
                 st.altair_chart(alt.hconcat(donut, legend), use_container_width=True)
                 return True
             
-            # 3.a) Try with aggregated statistics
-            df_share_hist = df[df["role"].isin(["vet", "rookie"])][["Participant", "RoleName", "PaidTotal"]]
-            ok = render_donut(df_share_hist)
+            # 3.a) Try with aggregated statistics (all-time)
+            df_share_hist = df[df["role"].isin(["vet", "rookie"])][["Participant", "RoleName", "PaidTotal"]].copy()
+            ok = render_donut_from_df(df_share_hist)
             
-            # 3.b) Fallback: last saved game's payers (in case stats are all zeros during testing)
+            # 3.b) Fallback: build from the last saved game (in case stats are zeros during testing)
             if not ok:
                 hist = st.session_state.history
                 if hist:
                     last = hist[-1]
-                    import pandas as pd
-                    rows_fallback = []
+                    rows_last = []
                     for p in last.get("participants", []):
-                        if p["role"] in ("vet", "rookie"):
+                        if p.get("role") in ("vet", "rookie"):
                             amt = int(p.get("amount", 0))
                             if amt > 0:
-                                rows_fallback.append({
+                                rows_last.append({
                                     "Participant": p["name"],
                                     "RoleName": "Veteran" if p["role"] == "vet" else "Rookie",
                                     "PaidTotal": amt,
                                 })
-                    if rows_fallback:
-                        df_share_last = pd.DataFrame(rows_fallback)
-                        ok = render_donut(df_share_last)
+                    df_share_last = pd.DataFrame(rows_last)
+                    ok = render_donut_from_df(df_share_last)
             
             if not ok:
                 st.info("No non-zero payments to display yet. Save a game where at least one veteran/rookie pays > 0 AED.")
