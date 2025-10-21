@@ -617,19 +617,43 @@ with tab_charts:
             df["HoursSelf"]   = df["hours_self"].astype(int)
             df["HoursJuniors"]= df["hours_juniors"].astype(int)
 
-            # ===== 1) Paid total (AED) by participant =====
-            st.markdown("**1) Paid total (AED) by participant**")
-            c1 = alt.Chart(df).mark_bar().encode(
-                x=alt.X("Participant:N", sort="-y", title="Participant"),
-                y=alt.Y("PaidTotal:Q", title="Paid total (AED)"),
-                color=alt.Color("RoleName:N", title="Role"),
-                tooltip=[
-                    alt.Tooltip("Participant:N"),
-                    alt.Tooltip("RoleName:N", title="Role"),
-                    alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f"),
-                ],
-            ).properties(width="container", height=320)
-            st.altair_chart(c1, use_container_width=True)
+            # ===== 1) Paid total (AED) — self vs juniors (stacked) =====
+            st.markdown("**1) Paid total (AED) — self vs juniors (stacked)**")
+            
+            df_payers = df[df["role"].isin(["vet", "rookie"])].copy()
+            if df_payers.empty or df_payers["PaidTotal"].sum() == 0:
+                st.info("No non-zero payments yet among veterans/rookies.")
+            else:
+                # Junior share is only for veterans; rookies have 0
+                df_payers["JuniorShare"] = 0
+                if "junior_paid_share" in df_payers.columns:
+                    df_payers.loc[df_payers["role"] == "vet", "JuniorShare"] = (
+                        df_payers.loc[df_payers["role"] == "vet", "junior_paid_share"].astype(int)
+                    )
+                df_payers["PaidSelf"] = (df_payers["PaidTotal"] - df_payers["JuniorShare"]).clip(lower=0).astype(int)
+            
+                # Long format for stacked bars
+                df_m = df_payers.melt(
+                    id_vars=["Participant", "RoleName"],
+                    value_vars=["PaidSelf", "JuniorShare"],
+                    var_name="Portion",
+                    value_name="AED",
+                )
+                df_m["Portion"] = df_m["Portion"].map({"PaidSelf": "Self", "JuniorShare": "Juniors"})
+            
+                c1 = alt.Chart(df_m).mark_bar().encode(
+                    x=alt.X("Participant:N", sort="-y", title="Participant"),
+                    y=alt.Y("AED:Q", title="Paid total (AED)"),
+                    color=alt.Color("Portion:N", title="Portion"),  # stacked Self + Juniors
+                    tooltip=[
+                        alt.Tooltip("Participant:N"),
+                        alt.Tooltip("RoleName:N", title="Role"),
+                        alt.Tooltip("Portion:N"),
+                        alt.Tooltip("AED:Q", title="AED", format=",.0f"),
+                    ],
+                ).properties(width="container", height=320)
+                st.altair_chart(c1, use_container_width=True)
+
 
             # ===== 2) Hours — self vs juniors (stacked) for veterans AND rookies =====
             st.markdown("**2) Hours — self vs juniors (stacked, veterans & rookies)**")
@@ -660,11 +684,10 @@ with tab_charts:
                 ).properties(width="container", height=320)
                 st.altair_chart(c2, use_container_width=True)
 
-            # ===== 3) Share of total paid (%) — with fallback to last saved game =====
-            st.markdown("**3) Share of total paid (%) — payers only**")
+            # ===== 3) Share of total paid (%) — veterans & rookies only, with fallback =====
+            st.markdown("**3) Share of total paid (%) — veterans & rookies**")
             
             def render_donut(df_share):
-                import altair as alt
                 total_paid_sum = float(df_share["PaidTotal"].sum())
                 if total_paid_sum <= 0:
                     return False
@@ -690,24 +713,26 @@ with tab_charts:
                 st.altair_chart(alt.hconcat(donut, legend), use_container_width=True)
                 return True
             
-            # 3.a) Try with aggregated Statistics (history totals)
-            df_share_hist = df[(df["role"].isin(["vet", "rookie"])) & (df["PaidTotal"] > 0)][["Participant","RoleName","PaidTotal"]]
+            # 3.a) Try with aggregated statistics
+            df_share_hist = df[df["role"].isin(["vet", "rookie"])][["Participant", "RoleName", "PaidTotal"]]
             ok = render_donut(df_share_hist)
             
-            # 3.b) Fallback: last saved game only
+            # 3.b) Fallback: last saved game's payers (in case stats are all zeros during testing)
             if not ok:
                 hist = st.session_state.history
                 if hist:
-                    last = hist[-1]  # last saved game
+                    last = hist[-1]
                     import pandas as pd
                     rows_fallback = []
                     for p in last.get("participants", []):
-                        if p["role"] in ("vet","rookie") and int(p.get("amount", 0)) > 0:
-                            rows_fallback.append({
-                                "Participant": p["name"],
-                                "RoleName": "Veteran" if p["role"]=="vet" else "Rookie",
-                                "PaidTotal": int(p.get("amount", 0)),
-                            })
+                        if p["role"] in ("vet", "rookie"):
+                            amt = int(p.get("amount", 0))
+                            if amt > 0:
+                                rows_fallback.append({
+                                    "Participant": p["name"],
+                                    "RoleName": "Veteran" if p["role"] == "vet" else "Rookie",
+                                    "PaidTotal": amt,
+                                })
                     if rows_fallback:
                         df_share_last = pd.DataFrame(rows_fallback)
                         ok = render_donut(df_share_last)
