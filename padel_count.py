@@ -692,19 +692,34 @@ with tab_charts:
                 ).properties(width="container", height=320)
                 st.altair_chart(c2, use_container_width=True)
 
-            # ===== 3) Share of total paid (%) — robust donut =====
+            # ===== 3) Share of total paid (%) — robust: aggregate directly from history =====
             st.markdown("**3) Share of total paid (%) — veterans & rookies**")
             
             import pandas as pd
             import altair as alt
             
-            def render_donut_from_df(df_share: pd.DataFrame) -> bool:
-                if df_share.empty:
-                    return False
-                total_paid_sum = float(df_share["PaidTotal"].fillna(0).sum())
-                if total_paid_sum <= 0:
-                    return False
-                df_share = df_share.copy()
+            # Build aggregated sums per participant from raw history (vets+rookies only)
+            agg = {}
+            for rec in st.session_state.history:
+                for p in rec.get("participants", []):
+                    role = p.get("role")
+                    if role not in ("vet", "rookie"):
+                        continue
+                    name = p.get("name", "")
+                    amt  = int(p.get("amount", 0) or 0)
+                    if amt <= 0:
+                        continue
+                    agg.setdefault(name, {"Participant": name,
+                                          "RoleName": "Veteran" if role == "vet" else "Rookie",
+                                          "PaidTotal": 0})
+                    agg[name]["PaidTotal"] += amt
+            
+            df_share = pd.DataFrame(agg.values()) if agg else pd.DataFrame(columns=["Participant","RoleName","PaidTotal"])
+            
+            if df_share.empty or df_share["PaidTotal"].fillna(0).sum() <= 0:
+                st.info("No non-zero payments to display yet. Save a game where at least one veteran/rookie pays > 0 AED.")
+            else:
+                total_paid_sum = float(df_share["PaidTotal"].sum())
                 df_share["share_pct"] = 100.0 * df_share["PaidTotal"] / total_paid_sum
             
                 donut = alt.Chart(df_share).mark_arc(innerRadius=60).encode(
@@ -724,32 +739,10 @@ with tab_charts:
                 ).properties(width=20, height=340)
             
                 st.altair_chart(alt.hconcat(donut, legend), use_container_width=True)
-                return True
             
-            # 3.a) Try with aggregated statistics (all-time)
-            df_share_hist = df[df["role"].isin(["vet", "rookie"])][["Participant", "RoleName", "PaidTotal"]].copy()
-            ok = render_donut_from_df(df_share_hist)
-            
-            # 3.b) Fallback: build from the last saved game (in case stats are zeros during testing)
-            if not ok:
-                hist = st.session_state.history
-                if hist:
-                    last = hist[-1]
-                    rows_last = []
-                    for p in last.get("participants", []):
-                        if p.get("role") in ("vet", "rookie"):
-                            amt = int(p.get("amount", 0))
-                            if amt > 0:
-                                rows_last.append({
-                                    "Participant": p["name"],
-                                    "RoleName": "Veteran" if p["role"] == "vet" else "Rookie",
-                                    "PaidTotal": amt,
-                                })
-                    df_share_last = pd.DataFrame(rows_last)
-                    ok = render_donut_from_df(df_share_last)
-            
-            if not ok:
-                st.info("No non-zero payments to display yet. Save a game where at least one veteran/rookie pays > 0 AED.")
+                # Optional small table for sanity check
+                with st.expander("🔎 Data used for donut"):
+                    st.dataframe(df_share.sort_values("PaidTotal", ascending=False), hide_index=True, use_container_width=True)
 
 # Footer
 st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
