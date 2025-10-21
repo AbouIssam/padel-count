@@ -548,34 +548,52 @@ with tab_stats:
     if not history:
         st.info("No history yet. Save at least one game to see stats.")
     else:
+        # on importe ici pour ne pas imposer pandas globalement
+        import pandas as pd
+
         rows = compute_statistics(history)
 
-        # Tableau lisible
-        def fmt_role(r):
-            return {"vet": "Veteran", "rookie": "Rookie", "junior": "Junior"}.get(r, r)
+        # Construire un DataFrame bien ordonné + renommage colonnes
+        df = pd.DataFrame(rows)
+        if df.empty:
+            st.info("No data yet.")
+        else:
+            df = df[[
+                "name", "role", "hours_self", "hours_juniors",
+                "hours_total", "paid_total", "junior_paid_share"
+            ]].rename(columns={
+                "name": "Participant",
+                "role": "Role",
+                "hours_self": "Hours (self)",
+                "hours_juniors": "Hours (juniors)",
+                "hours_total": "Hours (total)",
+                "paid_total": "Paid total (AED)",
+                "junior_paid_share": "of which juniors (AED)",
+            })
 
-        # En-têtes
-        st.markdown(
-            """
-| Participant | Role | Hours (self) | Hours (juniors) | Hours (total) | Paid total (AED) | of which juniors (AED) |
-|---|---|---:|---:|---:|---:|---:|
-""")
-        # Lignes
-        for r in rows:
-            st.markdown(
-                f"| **{r['name']}** | {fmt_role(r['role'])} | "
-                f"{r['hours_self']:,} | {r['hours_juniors']:,} | {r['hours_total']:,} | "
-                f"{r['paid_total']:,} | {r['junior_paid_share']:,} |"
+            st.dataframe(
+                df,
+                use_container_width=True,
+                column_config={
+                    "Participant": st.column_config.TextColumn(width="medium"),
+                    "Role": st.column_config.TextColumn(width="small"),
+                    "Hours (self)": st.column_config.NumberColumn(format="%d"),
+                    "Hours (juniors)": st.column_config.NumberColumn(format="%d"),
+                    "Hours (total)": st.column_config.NumberColumn(format="%d"),
+                    "Paid total (AED)": st.column_config.NumberColumn(format="AED %d"),
+                    "of which juniors (AED)": st.column_config.NumberColumn(format="AED %d"),
+                },
+                hide_index=True,
             )
 
-        # Export CSV des stats
-        import io, csv
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["name","role","hours_self","hours_juniors","hours_total","paid_total_AED","junior_paid_share_AED"])
-        for r in rows:
-            w.writerow([r["name"], r["role"], r["hours_self"], r["hours_juniors"], r["hours_total"], r["paid_total"], r["junior_paid_share"]])
-        st.download_button("⬇️ Export Statistics (CSV)", buf.getvalue(), "padel_statistics.csv", "text/csv")
+            # Export CSV des stats
+            csv_buf = df.to_csv(index=False)
+            st.download_button(
+                "⬇️ Export Statistics (CSV)",
+                csv_buf,
+                file_name="padel_statistics.csv",
+                mime="text/csv",
+            )
 
 # Footer
 st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
