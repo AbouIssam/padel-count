@@ -660,14 +660,15 @@ with tab_charts:
                 ).properties(width="container", height=320)
                 st.altair_chart(c2, use_container_width=True)
 
-
-            # ===== 3) Share of total paid (%) (donut) — payers only =====
+            # ===== 3) Share of total paid (%) — with fallback to last saved game =====
             st.markdown("**3) Share of total paid (%) — payers only**")
-            df_share = df[(df["role"].isin(["vet", "rookie"])) & (df["PaidTotal"] > 0)].copy()
-            if df_share.empty:
-                st.info("No paid amounts among veterans/rookies yet — save a game with non-zero payments.")
-            else:
+            
+            def render_donut(df_share):
+                import altair as alt
                 total_paid_sum = float(df_share["PaidTotal"].sum())
+                if total_paid_sum <= 0:
+                    return False
+                df_share = df_share.copy()
                 df_share["share_pct"] = 100.0 * df_share["PaidTotal"] / total_paid_sum
             
                 donut = alt.Chart(df_share).mark_arc(innerRadius=60).encode(
@@ -687,6 +688,32 @@ with tab_charts:
                 ).properties(width=20, height=340)
             
                 st.altair_chart(alt.hconcat(donut, legend), use_container_width=True)
+                return True
+            
+            # 3.a) Try with aggregated Statistics (history totals)
+            df_share_hist = df[(df["role"].isin(["vet", "rookie"])) & (df["PaidTotal"] > 0)][["Participant","RoleName","PaidTotal"]]
+            ok = render_donut(df_share_hist)
+            
+            # 3.b) Fallback: last saved game only
+            if not ok:
+                hist = st.session_state.history
+                if hist:
+                    last = hist[-1]  # last saved game
+                    import pandas as pd
+                    rows_fallback = []
+                    for p in last.get("participants", []):
+                        if p["role"] in ("vet","rookie") and int(p.get("amount", 0)) > 0:
+                            rows_fallback.append({
+                                "Participant": p["name"],
+                                "RoleName": "Veteran" if p["role"]=="vet" else "Rookie",
+                                "PaidTotal": int(p.get("amount", 0)),
+                            })
+                    if rows_fallback:
+                        df_share_last = pd.DataFrame(rows_fallback)
+                        ok = render_donut(df_share_last)
+            
+            if not ok:
+                st.info("No non-zero payments to display yet. Save a game where at least one veteran/rookie pays > 0 AED.")
 
 # Footer
 st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
