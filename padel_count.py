@@ -170,6 +170,97 @@ def export_history_csv(history):
             ])
     return buf.getvalue()
 
+def compute_statistics(history: list[dict]) -> list[dict]:
+    """
+    Retourne une liste de lignes stats:
+    { name, role, hours_self, hours_juniors, hours_total, paid_total, junior_paid_share }
+    - hours_self : heures du participant lui-même (1 ou 2)
+    - hours_juniors : total des heures des juniors attachés (pour les vétérans)
+    - paid_total : somme des montants réellement payés (0 pour juniors)
+    - junior_paid_share : pour les vétérans, part de ce payé imputable aux juniors (en AED)
+    """
+    # Accumulateur par participant
+    acc = {}
+
+    for rec in history:
+        total = float(rec.get("total", 0))
+        d = float(rec.get("discount_pct", 0.0)) / 100.0
+        d = min(0.99, max(0.0, d))
+
+        parts = rec.get("participants", [])
+
+        # Séparer par rôle + mapping junior->vétéran
+        vets = [p for p in parts if p["role"] == "vet"]
+        rooks = [p for p in parts if p["role"] == "rookie"]
+        juns = [p for p in parts if p["role"] == "junior"]
+
+        attached_map = {}  # vet_name -> list of (junior_hours_weighted)
+        # poids (pour proportion) : 2h=1.0 ; 1h=0.5 ; rookies/juniors ont facteur (1-d)
+        def hf(hours): return 1.0 if int(hours) == 2 else 0.5
+
+        # Construire les poids “proportion” côté vétérans (self vs juniors)
+        vet_own_w = {v["name"]: hf(v["hours"]) * 1.0 for v in vets}
+        vet_jun_w = {v["name"]: 0.0 for v in vets}
+        for j in juns:
+            vname = j.get("attached_to", None)
+            if vname:
+                vet_jun_w[vname] = vet_jun_w.get(vname, 0.0) + hf(j["hours"]) * (1.0 - d)
+
+        # Montants réellement payés par personne dans l’enregistrement
+        paid_map = {}
+        for p in parts:
+            paid_map[p["name"]] = paid_map.get(p["name"], 0) + int(p.get("amount", 0))
+
+        # 1) Heures & paiements pour chacun
+        for p in parts:
+            name = p["name"]; role = p["role"]; hours = int(p["hours"])
+            row = acc.setdefault(name, {
+                "name": name, "role": role,
+                "hours_self": 0, "hours_juniors": 0,
+                "paid_total": 0, "junior_paid_share": 0.0
+            })
+            # cumuler heures “self”
+            if role in ("vet", "rookie"):
+                row["hours_self"] += hours
+            elif role == "junior":
+                row["hours_self"] += hours  # pour info sur le junior lui-même (même s’il paie 0)
+
+            # cumuler payé réel
+            if role != "junior":  # juniors ne paient jamais
+                row["paid_total"] += int(paid_map.get(name, 0))
+
+        # 2) Ajouter heures des juniors à leur vétéran + part payée imputable aux juniors
+        for v in vets:
+            vname = v["name"]
+            # heures juniors rattachés
+            hrs_j = 0
+            for j in juns:
+                if j.get("attached_to") == vname:
+                    hrs_j += int(j["hours"])
+            if hrs_j:
+                acc[vname]["hours_juniors"] += hrs_j
+
+            # proportion du paiement du vétéran imputable aux juniors
+            own_w = vet_own_w.get(vname, 0.0)
+            jun_w = vet_jun_w.get(vname, 0.0)
+            tot_w = own_w + jun_w
+            if tot_w > 0 and acc[vname]["paid_total"] > 0 and jun_w > 0:
+                share = (jun_w / tot_w) * acc[vname]["paid_total"]
+                acc[vname]["junior_paid_share"] += share
+
+    # Finaliser heures totales
+    rows = []
+    for name, r in acc.items():
+        r["hours_total"] = int(r["hours_self"] + r["hours_juniors"])
+        # arrondir junior_paid_share à l’entier le plus proche pour affichage
+        r["junior_paid_share"] = int(round(r["junior_paid_share"]))
+        rows.append(r)
+
+    # tri : vétérans d’abord, puis rookies, puis juniors, ensuite par nom
+    role_order = {"vet": 0, "rookie": 1, "junior": 2}
+    rows.sort(key=lambda x: (role_order.get(x["role"], 9), x["name"]))
+    return rows
+
 def start_edit_from_record(rec_index):
     """Load a history record into the current UI (prefill widgets) and set edit_index."""
     rec = st.session_state.history[rec_index]
@@ -282,7 +373,7 @@ per_person = res["per_person"]
 paid_total = res["sum"]
 
 # ---------- Tabs ----------
-tab_game, tab_history = st.tabs(["🎮 Current Game", "🗂️ History"])
+tab_game, tab_history, tab_stats = st.tabs(["🎮 Current Game", "🗂️ History", "📈 Statistics"])
 
 with tab_game:
     if st.session_state.edit_index is not None:
@@ -450,6 +541,41 @@ with tab_history:
             st.session_state.history = []
             clear_edit_state()
             st.warning("All history cleared.")
+
+with tab_stats:
+    st.subheader("📈 Statistics per participant")
+    history = st.session_state.history
+    if not history:
+        st.info("No history yet. Save at least one game to see stats.")
+    else:
+        rows = compute_statistics(history)
+
+        # Tableau lisible
+        def fmt_role(r):
+            return {"vet": "Veteran", "rookie": "Rookie", "junior": "Junior"}.get(r, r)
+
+        # En-têtes
+        st.markdown(
+            """
+| Participant | Role | Hours (self) | Hours (juniors) | Hours (total) | Paid total (AED) | of which juniors (AED) |
+|---|---|---:|---:|---:|---:|---:|
+""")
+        # Lignes
+        for r in rows:
+            st.markdown(
+                f"| **{r['name']}** | {fmt_role(r['role'])} | "
+                f"{r['hours_self']:,} | {r['hours_juniors']:,} | {r['hours_total']:,} | "
+                f"{r['paid_total']:,} | {r['junior_paid_share']:,} |"
+            )
+
+        # Export CSV des stats
+        import io, csv
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["name","role","hours_self","hours_juniors","hours_total","paid_total_AED","junior_paid_share_AED"])
+        for r in rows:
+            w.writerow([r["name"], r["role"], r["hours_self"], r["hours_juniors"], r["hours_total"], r["paid_total"], r["junior_paid_share"]])
+        st.download_button("⬇️ Export Statistics (CSV)", buf.getvalue(), "padel_statistics.csv", "text/csv")
 
 # Footer
 st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
