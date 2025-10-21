@@ -644,7 +644,7 @@ with tab_charts:
                     "hours_juniors": "Juniors"
                 })
                 c2 = alt.Chart(df_v_m).mark_bar().encode(
-                    x=alt.X("Participant:N", sort=alt.SortField(field="Hours", op="sum", order="descending")),
+                    x=alt.X("Participant:N", sort="-y"),
                     y=alt.Y("Hours:Q", title="Total hours"),
                     color=alt.Color("HoursType:N", title="Type"),
                     order=alt.Order("HoursType:N"),
