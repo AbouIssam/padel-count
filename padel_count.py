@@ -172,91 +172,69 @@ def export_history_csv(history):
 
 def compute_statistics(history: list[dict]) -> list[dict]:
     """
-    Retourne une liste de lignes stats:
-    { name, role, hours_self, hours_juniors, hours_total, paid_total, junior_paid_share }
-    - hours_self : heures du participant lui-même (1 ou 2)
-    - hours_juniors : total des heures des juniors attachés (pour les vétérans)
-    - paid_total : somme des montants réellement payés (0 pour juniors)
-    - junior_paid_share : pour les vétérans, part de ce payé imputable aux juniors (en AED)
+    Returns rows:
+      { name, role, hours_self, hours_juniors, hours_total, paid_total, junior_paid_share }
+    junior_paid_share is computed PER GAME from the veteran's amount in that game only.
     """
-    # Accumulateur par participant
     acc = {}
 
     for rec in history:
         total = float(rec.get("total", 0))
         d = float(rec.get("discount_pct", 0.0)) / 100.0
         d = min(0.99, max(0.0, d))
-
         parts = rec.get("participants", [])
 
-        # Séparer par rôle + mapping junior->vétéran
+        # Separate roles
         vets = [p for p in parts if p["role"] == "vet"]
         rooks = [p for p in parts if p["role"] == "rookie"]
         juns = [p for p in parts if p["role"] == "junior"]
 
-        attached_map = {}  # vet_name -> list of (junior_hours_weighted)
-        # poids (pour proportion) : 2h=1.0 ; 1h=0.5 ; rookies/juniors ont facteur (1-d)
-        def hf(hours): return 1.0 if int(hours) == 2 else 0.5
+        def hf(hours):  # weight basis for 2h/1h
+            return 1.0 if int(hours) == 2 else 0.5
 
-        # Construire les poids “proportion” côté vétérans (self vs juniors)
-        vet_own_w = {v["name"]: hf(v["hours"]) * 1.0 for v in vets}
-        vet_jun_w = {v["name"]: 0.0 for v in vets}
-        for j in juns:
-            vname = j.get("attached_to", None)
-            if vname:
-                vet_jun_w[vname] = vet_jun_w.get(vname, 0.0) + hf(j["hours"]) * (1.0 - d)
+        # Amount paid in THIS game only (not cumulative)
+        paid_map_this = {p["name"]: int(p.get("amount", 0) or 0) for p in parts}
 
-        # Montants réellement payés par personne dans l’enregistrement
-        paid_map = {}
+        # Track self-hours & paid_total (sum over games)
         for p in parts:
-            paid_map[p["name"]] = paid_map.get(p["name"], 0) + int(p.get("amount", 0))
-
-        # 1) Heures & paiements pour chacun
-        for p in parts:
-            name = p["name"]; role = p["role"]; hours = int(p["hours"])
+            name, role, hours = p["name"], p["role"], int(p["hours"])
             row = acc.setdefault(name, {
                 "name": name, "role": role,
                 "hours_self": 0, "hours_juniors": 0,
                 "paid_total": 0, "junior_paid_share": 0.0
             })
-            # cumuler heures “self”
-            if role in ("vet", "rookie"):
-                row["hours_self"] += hours
-            elif role == "junior":
-                row["hours_self"] += hours  # pour info sur le junior lui-même (même s’il paie 0)
+            # hours_self: keep for all roles (even juniors) as info
+            row["hours_self"] += hours
+            # paid_total: only for payers
+            if role != "junior":
+                row["paid_total"] += paid_map_this.get(name, 0)
 
-            # cumuler payé réel
-            if role != "junior":  # juniors ne paient jamais
-                row["paid_total"] += int(paid_map.get(name, 0))
-
-        # 2) Ajouter heures des juniors à leur vétéran + part payée imputable aux juniors
+        # For each veteran, add juniors' hours AND compute junior-paid share PER GAME
         for v in vets:
             vname = v["name"]
-            # heures juniors rattachés
-            hrs_j = 0
-            for j in juns:
-                if j.get("attached_to") == vname:
-                    hrs_j += int(j["hours"])
+
+            # Add juniors' hours attached to this veteran (sum of raw hours 1/2)
+            hrs_j = sum(int(j["hours"]) for j in juns if j.get("attached_to") == vname)
             if hrs_j:
                 acc[vname]["hours_juniors"] += hrs_j
 
-            # proportion du paiement du vétéran imputable aux juniors
-            own_w = vet_own_w.get(vname, 0.0)
-            jun_w = vet_jun_w.get(vname, 0.0)
+            # Compute junior share for THIS game only
+            own_w = hf(v["hours"]) * 1.0
+            jun_w = sum(hf(j["hours"]) * (1.0 - d) for j in juns if j.get("attached_to") == vname)
             tot_w = own_w + jun_w
-            if tot_w > 0 and acc[vname]["paid_total"] > 0 and jun_w > 0:
-                share = (jun_w / tot_w) * acc[vname]["paid_total"]
-                acc[vname]["junior_paid_share"] += share
 
-    # Finaliser heures totales
+            vet_paid_this = paid_map_this.get(vname, 0)
+            if tot_w > 0 and jun_w > 0 and vet_paid_this > 0:
+                share_this_game = (jun_w / tot_w) * vet_paid_this
+                acc[vname]["junior_paid_share"] += share_this_game
+
+    # Finalize rows
     rows = []
     for name, r in acc.items():
         r["hours_total"] = int(r["hours_self"] + r["hours_juniors"])
-        # arrondir junior_paid_share à l’entier le plus proche pour affichage
         r["junior_paid_share"] = int(round(r["junior_paid_share"]))
         rows.append(r)
 
-    # tri : vétérans d’abord, puis rookies, puis juniors, ensuite par nom
     role_order = {"vet": 0, "rookie": 1, "junior": 2}
     rows.sort(key=lambda x: (role_order.get(x["role"], 9), x["name"]))
     return rows
