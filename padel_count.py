@@ -631,43 +631,45 @@ with tab_charts:
             ).properties(width="container", height=320)
             st.altair_chart(c1, use_container_width=True)
 
-            # ===== 2) Hours for veterans — self vs juniors (stacked) =====
-            st.markdown("**2) Hours for veterans — self vs juniors (stacked)**")
-            df_v = df[df["role"] == "vet"].copy()
-            if df_v.empty:
-                st.info("No veteran data to chart.")
+            # ===== 2) Hours — self vs juniors (stacked) for veterans AND rookies =====
+            st.markdown("**2) Hours — self vs juniors (stacked, veterans & rookies)**")
+            df_nr = df[df["role"].isin(["vet", "rookie"])].copy()
+            if df_nr.empty:
+                st.info("No veteran/rookie data to chart.")
             else:
-                df_v_m = df_v.melt(
-                    id_vars=["Participant"],
+                df_nr_m = df_nr.melt(
+                    id_vars=["Participant", "RoleName"],
                     value_vars=["HoursSelf", "HoursJuniors"],
                     var_name="HoursType",
                     value_name="Hours",
                 )
-                df_v_m["HoursType"] = df_v_m["HoursType"].map({
+                df_nr_m["HoursType"] = df_nr_m["HoursType"].map({
                     "HoursSelf": "Self",
                     "HoursJuniors": "Juniors",
                 })
-                c2 = alt.Chart(df_v_m).mark_bar().encode(
-                    x=alt.X("Participant:N", sort="-y"),
+                c2 = alt.Chart(df_nr_m).mark_bar().encode(
+                    x=alt.X("Participant:N", sort="-y", title="Participant"),
                     y=alt.Y("Hours:Q", title="Total hours"),
                     color=alt.Color("HoursType:N", title="Type"),
                     tooltip=[
                         alt.Tooltip("Participant:N"),
+                        alt.Tooltip("RoleName:N", title="Role"),
                         alt.Tooltip("HoursType:N", title="Type"),
                         alt.Tooltip("Hours:Q", format=",.0f"),
                     ],
                 ).properties(width="container", height=320)
                 st.altair_chart(c2, use_container_width=True)
 
-            # ===== 3) Share of total paid (%) (donut) =====
-            st.markdown("**3) Share of total paid (%)**")
-            total_paid_sum = float(df["PaidTotal"].sum())
-            if total_paid_sum <= 0:
-                st.info("No paid amounts to chart.")
-            else:
-                df_share = df[["Participant", "RoleName", "PaidTotal"]].copy()
-                df_share["share_pct"] = 100.0 * df_share["PaidTotal"] / total_paid_sum
 
+            # ===== 3) Share of total paid (%) (donut) — payers only =====
+            st.markdown("**3) Share of total paid (%) — payers only**")
+            df_share = df[(df["role"].isin(["vet", "rookie"])) & (df["PaidTotal"] > 0)].copy()
+            if df_share.empty:
+                st.info("No paid amounts among veterans/rookies yet — save a game with non-zero payments.")
+            else:
+                total_paid_sum = float(df_share["PaidTotal"].sum())
+                df_share["share_pct"] = 100.0 * df_share["PaidTotal"] / total_paid_sum
+            
                 donut = alt.Chart(df_share).mark_arc(innerRadius=60).encode(
                     theta=alt.Theta("share_pct:Q", title="Share (%)"),
                     color=alt.Color("Participant:N", legend=None),
@@ -678,12 +680,12 @@ with tab_charts:
                         alt.Tooltip("share_pct:Q", title="Share (%)", format=".1f"),
                     ],
                 ).properties(width=340, height=340)
-
+            
                 legend = alt.Chart(df_share).mark_rect().encode(
                     y=alt.Y("Participant:N", sort="-x", axis=alt.Axis(title=None)),
                     color=alt.Color("Participant:N", legend=None),
                 ).properties(width=20, height=340)
-
+            
                 st.altair_chart(alt.hconcat(donut, legend), use_container_width=True)
 
 # Footer
