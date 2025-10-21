@@ -373,7 +373,7 @@ per_person = res["per_person"]
 paid_total = res["sum"]
 
 # ---------- Tabs ----------
-tab_game, tab_history, tab_stats = st.tabs(["🎮 Current Game", "🗂️ History", "📈 Statistics"])
+tab_game, tab_history, tab_stats, tab_charts = st.tabs(["🎮 Current Game", "🗂️ History", "📈 Statistics", "📊 Charts"])
 
 with tab_game:
     if st.session_state.edit_index is not None:
@@ -594,6 +594,95 @@ with tab_stats:
                 file_name="padel_statistics.csv",
                 mime="text/csv",
             )
+with tab_charts:
+    st.subheader("📊 Charts per participant")
+    history = st.session_state.history
+    if not history:
+        st.info("No history yet. Save at least one game to see charts.")
+    else:
+        import pandas as pd
+        import altair as alt
+
+        rows = compute_statistics(history)
+        df = pd.DataFrame(rows)
+        if df.empty:
+            st.info("No data to chart.")
+        else:
+            # Normalisations & titres
+            role_name = {"vet": "Veteran", "rookie": "Rookie", "junior": "Junior"}
+            df["RoleName"] = df["role"].map(role_name)
+
+            # ===== Chart 1 : Paid total by participant (barres) =====
+            st.markdown("**1) Paid total (AED) by participant**")
+            c1 = alt.Chart(df).mark_bar().encode(
+                x=alt.X("Participant:N", sort="-y", title="Participant"),
+                y=alt.Y("Paid total (AED):Q", title="Paid total (AED)"),
+                color=alt.Color("RoleName:N", title="Role"),
+                tooltip=[
+                    alt.Tooltip("Participant:N"),
+                    alt.Tooltip("RoleName:N", title="Role"),
+                    alt.Tooltip("Paid total (AED):Q", format=",.0f")
+                ]
+            ).properties(width="container", height=320)
+            st.altair_chart(c1, use_container_width=True)
+
+            # ===== Chart 2 : Heures (self vs juniors) pour les VETERANS (barres empilées) =====
+            st.markdown("**2) Hours for veterans — self vs juniors (stacked)**")
+            df_v = df[df["role"] == "vet"].copy()
+            if df_v.empty:
+                st.info("No veteran data to chart.")
+            else:
+                df_v_m = df_v.melt(
+                    id_vars=["name"],
+                    value_vars=["hours_self", "hours_juniors"],
+                    var_name="HoursType",
+                    value_name="Hours"
+                )
+                df_v_m["Participant"] = df_v_m["name"]
+                df_v_m["HoursType"] = df_v_m["HoursType"].map({
+                    "hours_self": "Self",
+                    "hours_juniors": "Juniors"
+                })
+                c2 = alt.Chart(df_v_m).mark_bar().encode(
+                    x=alt.X("Participant:N", sort=alt.SortField(field="Hours", op="sum", order="descending")),
+                    y=alt.Y("Hours:Q", title="Total hours"),
+                    color=alt.Color("HoursType:N", title="Type"),
+                    order=alt.Order("HoursType:N"),
+                    tooltip=[
+                        alt.Tooltip("Participant:N"),
+                        alt.Tooltip("HoursType:N", title="Type"),
+                        alt.Tooltip("Hours:Q", format=",.0f")
+                    ]
+                ).properties(width="container", height=320)
+                st.altair_chart(c2, use_container_width=True)
+
+            # ===== Chart 3 : Part du total payé (pourcentage) =====
+            st.markdown("**3) Share of total paid (%)**")
+            total_paid_sum = df["paid_total"].sum()
+            if total_paid_sum <= 0:
+                st.info("No paid amounts to chart.")
+            else:
+                df_share = df[["name", "paid_total", "RoleName"]].copy()
+                df_share["share_pct"] = 100.0 * df_share["paid_total"] / total_paid_sum
+                df_share["Participant"] = df_share["name"]
+                c3 = alt.Chart(df_share).mark_arc(innerRadius=60).encode(
+                    theta=alt.Theta("share_pct:Q", stack=True, title="Share %"),
+                    color=alt.Color("Participant:N", legend=None),
+                    tooltip=[
+                        alt.Tooltip("Participant:N"),
+                        alt.Tooltip("RoleName:N", title="Role"),
+                        alt.Tooltip("paid_total:Q", title="Paid (AED)", format=",.0f"),
+                        alt.Tooltip("share_pct:Q", title="Share (%)", format=".1f")
+                    ]
+                ).properties(width=340, height=340)
+
+                # Légende à part pour visibilité
+                c3_legend = alt.Chart(df_share).mark_rect().encode(
+                    y=alt.Y("Participant:N", sort="-x", axis=alt.Axis(title=None)),
+                    color=alt.Color("Participant:N", legend=None)
+                ).properties(width=20, height=340)
+
+                st.altair_chart(alt.hconcat(c3, c3_legend).resolve_legend(color="independent"), use_container_width=True)
 
 # Footer
 st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
