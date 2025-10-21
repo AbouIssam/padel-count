@@ -644,18 +644,17 @@ with tab_charts:
             # ===== 2) Hours per participant (no stacking; juniors shown separately) =====
             st.markdown("**2) Hours per participant**")
             
-            df_hours = df.copy()
-            # Use each participant's own hours only
-            df_hours = df_hours[["Participant", "RoleName", "HoursSelf"]]
+            import pandas as pd
+            import altair as alt
             
-            if df_hours.empty or df_hours["HoursSelf"].fillna(0).sum() == 0:
+            df_hours = df[["Participant", "RoleName", "HoursSelf"]].copy()
+            df_hours["HoursSelf"] = pd.to_numeric(df_hours["HoursSelf"], errors="coerce").fillna(0)
+            
+            if df_hours.empty or df_hours["HoursSelf"].sum() == 0:
                 st.info("No hours to display yet.")
             else:
-                import altair as alt
                 c2 = alt.Chart(df_hours).mark_bar().encode(
-                    x=alt.X("Participant:N",
-                            sort=alt.SortField(field="HoursSelf", op="sum", order="descending"),
-                            title="Participant"),
+                    x=alt.X("Participant:N", sort="-y", title="Participant"),  # <- sort by y descending
                     y=alt.Y("HoursSelf:Q", title="Hours (self)"),
                     color=alt.Color("RoleName:N", title="Role"),
                     tooltip=[
