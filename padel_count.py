@@ -666,7 +666,7 @@ with tab_charts:
             
                 st.altair_chart(c2, use_container_width=True)
 
-            # ===== 3) Share of total paid (%) — simple, robust donut =====
+            # ===== 3) Share of total paid (%) — robust donut with safe padding =====
             st.markdown("**3) Share of total paid (%) — veterans & rookies**")
             
             import pandas as pd
@@ -693,39 +693,29 @@ with tab_charts:
             if df_share.empty or df_share["PaidTotal"].fillna(0).sum() <= 0:
                 st.info("No non-zero payments to display yet. Save a game where at least one veteran/rookie pays > 0 AED.")
             else:
-                # Ensure correct dtypes
                 df_share["Participant"] = df_share["Participant"].astype(str)
                 df_share["RoleName"]    = df_share["RoleName"].astype(str)
                 df_share["PaidTotal"]   = pd.to_numeric(df_share["PaidTotal"], errors="coerce").fillna(0)
             
-                donut = alt.Chart(df_share).mark_arc(innerRadius=70, outerRadius=140).encode(
-                    theta=alt.Theta("PaidTotal:Q", title="Paid (AED)"),  # let Vega compute shares
-                    color=alt.Color("Participant:N", legend=alt.Legend(title="Participant")),
-                    tooltip=[
-                        alt.Tooltip("Participant:N"),
-                        alt.Tooltip("RoleName:N", title="Role"),
-                        alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f"),
-                    ],
-                ).properties(width=380, height=380)
+                donut = (
+                    alt.Chart(df_share)
+                    .mark_arc(innerRadius=60, outerRadius=130)  # slightly smaller to avoid edge clipping
+                    .encode(
+                        theta=alt.Theta("PaidTotal:Q", title="Paid (AED)"),
+                        color=alt.Color("Participant:N", legend=alt.Legend(title="Participant")),
+                        tooltip=[
+                            alt.Tooltip("Participant:N"),
+                            alt.Tooltip("RoleName:N", title="Role"),
+                            alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f"),
+                        ],
+                    )
+                    .properties(width=360, height=360)  # reasonable default size
+                    .configure_view(stroke=None)        # remove chart border (prevents subtle clipping)
+                    .configure(padding={"left": 32, "right": 32, "top": 10, "bottom": 10})  # add safe padding
+                )
             
-                # render with fixed size (some setups ignore container width on arcs)
-                st.altair_chart(donut, use_container_width=False)
-            
-                # Optional: fallback bar if the environment still refuses to render arcs
-                try:
-                    pass  # donut rendered above
-                except Exception:
-                    st.warning("Donut not supported here — showing a bar chart instead.")
-                    bar = alt.Chart(df_share).mark_bar().encode(
-                        x=alt.X("Participant:N", sort="-y"),
-                        y=alt.Y("PaidTotal:Q", title="Paid (AED)"),
-                        color=alt.Color("RoleName:N", title="Role"),
-                        tooltip=["Participant:N", "RoleName:N", alt.Tooltip("PaidTotal:Q", title="Paid (AED)", format=",.0f")],
-                    ).properties(width="container", height=320)
-                    st.altair_chart(bar, use_container_width=True)
-            
-                with st.expander("🔎 Data used for donut"):
-                    st.dataframe(df_share.sort_values("PaidTotal", ascending=False), hide_index=True, use_container_width=True)
+                # Let Streamlit handle responsive sizing; Vega will keep padding
+                st.altair_chart(donut, use_container_width=True)
 
 # Footer
 st.caption("✅ Only the save timestamp is stored (GST). Default total is AED 300 for 2 hours. Juniors free; rookies favored in rounding; history with edit/delete & CSV.")
