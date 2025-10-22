@@ -673,14 +673,16 @@ with tab_charts:
                 df_m["Portion"] = df_m["Portion"].map({"PaidSelf": "Self", "JuniorShare": "Juniors"})
             
                 import altair as alt
-                c1 = alt.Chart(df_m).mark_bar().encode(
+                c1 = alt.Chart(df_m).mark_bar(
+                    stroke='white', strokeWidth=0.8
+                ).encode(
                     x=alt.X("Participant:N", sort="-y", title="Participant"),
                     y=alt.Y("AED:Q", title="Paid total (AED)"),
                     color=alt.Color(
                         "Portion:N",
                         title="Portion",
                         # optional fixed palette for consistency
-                        scale=alt.Scale(domain=["Self", "Juniors"], range=["#4f46e5", "#a78bfa"]),
+                        scale=alt.Scale(domain=["Self", "Juniors"], range=["#1e40af", "#f59e0b"]),
                     ),
                     order=alt.Order("Portion:N"),
                     tooltip=[
