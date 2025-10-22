@@ -1,0 +1,42 @@
+[
+  {
+    "timestamp_saved_gst": "2025-10-22 07:51:58 GST",
+    "total": 300,
+    "discount_pct": 30.0,
+    "W": 4.4,
+    "paid_total": 300,
+    "participants": [
+      {
+        "name": "Cheikh Abou Layth Al Armany",
+        "role": "vet",
+        "hours": 2,
+        "amount": 116
+      },
+      {
+        "name": "Abu HaFs",
+        "role": "vet",
+        "hours": 2,
+        "amount": 69
+      },
+      {
+        "name": "Abou Issam",
+        "role": "vet",
+        "hours": 2,
+        "amount": 68
+      },
+      {
+        "name": "Layth",
+        "role": "rookie",
+        "hours": 2,
+        "amount": 47
+      },
+      {
+        "name": "Ibrahim",
+        "role": "junior",
+        "hours": 2,
+        "amount": 0,
+        "attached_to": "Cheikh Abou Layth Al Armany"
+      }
+    ]
+  }
+]
