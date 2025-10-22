@@ -4,6 +4,11 @@ import io
 from datetime import datetime
 from zoneinfo import ZoneInfo  # Python 3.9+
 import streamlit as st
+import os
+import json
+from pathlib import Path
+import pandas as pd
+import altair as alt
 
 # ---------- Page ----------
 st.set_page_config(page_title="🎾 Padel Charges (AED, History + Edit)", page_icon="🎾", layout="centered")
@@ -17,10 +22,31 @@ st.caption(
 AED = "AED"
 GST_TZ = ZoneInfo("Asia/Dubai")
 
+# ---- Simple on-disk persistence (JSON) ----
+HIST_FILE = Path("padel_history.json")  # change path if you prefer
+
+def load_history_from_disk() -> list:
+    try:
+        if HIST_FILE.exists():
+            with open(HIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+    except Exception as e:
+        st.warning(f"Could not load history from disk: {e}")
+    return []
+
+def save_history_to_disk(history: list) -> None:
+    try:
+        with open(HIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Could not save history to disk: {e}")
+
 # ---------- Fixed roster & attachments ----------
 VETERANS = [
     "Cheikh Abou Layth Al Armany",
-    "Abou Hafsa",
+    "Abu HaFs",
     "Abou Issam",
 ]
 ROOKIES = [
@@ -46,7 +72,7 @@ COLORS = {
 
 # ---------- Session state: history + edit/prefill ----------
 if "history" not in st.session_state:
-    st.session_state.history = []  # list of records
+    st.session_state.history = load_history_from_disk()
 
 if "edit_index" not in st.session_state:
     st.session_state.edit_index = None  # None or int index in history
@@ -432,6 +458,7 @@ with tab_game:
                         "amount": 0, "attached_to": j["attached"]
                     })
                 st.session_state.history.append(record)
+                save_history_to_disk(st.session_state.history)
                 st.success("Game saved to history ✅")
         else:
             # Update existing record
@@ -461,6 +488,7 @@ with tab_game:
                         "amount": 0, "attached_to": j["attached"]
                     })
                 st.session_state.history[idx] = record
+                save_history_to_disk(st.session_state.history)
                 clear_edit_state()
                 st.success("Changes saved ✅")
 
@@ -503,6 +531,7 @@ with tab_history:
                 with c2:
                     if st.button("🗑️ Delete", key=f"del_{real_idx}"):
                         del st.session_state.history[real_idx]
+                        save_history_to_disk(st.session_state.history)
                         st.warning(f"Deleted game #{real_idx + 1}.")
                         st.rerun()
 
@@ -515,9 +544,35 @@ with tab_history:
             file_name="padel_history.csv",
             mime="text/csv"
         )
+
+        # JSON export
+        json_bytes = json.dumps(history, ensure_ascii=False, indent=2).encode("utf-8")
+        st.download_button(
+            "⬇️ Export History (JSON)",
+            json_bytes,
+            file_name="padel_history.json",
+            mime="application/json",
+        )
+        
+        # JSON import
+        uploaded = st.file_uploader("📥 Import History (JSON)", type=["json"])
+        if uploaded is not None:
+            try:
+                imported = json.load(uploaded)
+                if isinstance(imported, list):
+                    st.session_state.history = imported
+                    save_history_to_disk(st.session_state.history)
+                    st.success("History imported and saved to disk.")
+                    st.rerun()
+                else:
+                    st.error("Invalid JSON format (expected a list).")
+            except Exception as e:
+                st.error(f"Could not import JSON: {e}")
+
         if st.button("🧹 Clear all history"):
             st.session_state.history = []
             clear_edit_state()
+            save_history_to_disk(st.session_state.history)
             st.warning("All history cleared.")
 
 with tab_stats:
@@ -578,9 +633,6 @@ with tab_charts:
     if not history:
         st.info("No history yet. Save at least one game to see charts.")
     else:
-        import pandas as pd
-        import altair as alt
-
         rows = compute_statistics(history)
         df = pd.DataFrame(rows)
 
@@ -642,11 +694,7 @@ with tab_charts:
                 st.altair_chart(c1, use_container_width=True)
 
             # ===== 2) Hours per participant (no stacking; juniors shown separately) =====
-            st.markdown("**2) Hours per participant**")
-            
-            import pandas as pd
-            import altair as alt
-            
+            st.markdown("**2) Hours per participant**")            
             df_hours = df[["Participant", "RoleName", "HoursSelf"]].copy()
             df_hours["HoursSelf"] = pd.to_numeric(df_hours["HoursSelf"], errors="coerce").fillna(0)
             
@@ -668,10 +716,6 @@ with tab_charts:
 
             # ===== 3) Share of total paid (%) — robust donut with safe padding =====
             st.markdown("**3) Share of total paid (%) — veterans & rookies**")
-            
-            import pandas as pd
-            import altair as alt
-            
             # Aggregate directly from history (vets+rookies only, amounts > 0)
             agg = {}
             for rec in st.session_state.history:
