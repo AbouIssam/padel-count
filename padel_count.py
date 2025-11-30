@@ -1,194 +1,165 @@
-# streamlit_padel_simple.py
+# streamlit_padel_simple_groups.py
 import math
-from zoneinfo import ZoneInfo  # Python 3.9+
 import streamlit as st
 
-# ---------- Page ----------
-st.set_page_config(page_title="🎾 Padel Charges (AED)", page_icon="🎾", layout="centered")
-st.title("🎾 Padel Charges Calculator — AED (Simplified)")
-st.caption(
-    "2h game basis. Each participant can join 2h (full) or 1h (half). "
-    "Rookies (incl. former juniors) receive a discount. Rounding favors rookies; "
-    "veterans absorb ±1 to reach the exact total. No history, no stats."
+AED = "AED"
+
+st.set_page_config(
+    page_title="🎾 Padel Simple Split (AED)",
+    page_icon="🎾",
+    layout="centered",
 )
 
-AED = "AED"
-GST_TZ = ZoneInfo("Asia/Dubai")
+st.title("🎾 Padel Split — Vétérans vs Rookies")
+st.caption(
+    "Tu entres juste le prix total, le nombre de vétérans et de rookies, "
+    "ainsi que la réduction des rookies. Le calcul est par catégorie, sans noms."
+)
 
-# ---------- Fixed roster ----------
-VETERANS = [
-    "Cheikh Abou Layth Al Armany",
-    "Abu HaFs",
-    "Abou Issam",
-]
-
-# Juniors merged into rookies (they now behave/pay like rookies)
-ROOKIES = [
-    "Layth",
-    "Mous3ab",
-    "Ibrahim",   # was junior
-    "Yassine",   # was junior
-]
-
-# Colors for role amounts (hex)
-COLORS = {
-    "vet": "#2563EB",     # blue-600
-    "rookie": "#059669",  # emerald-600
-}
-
-def aed(x: int | float) -> str:
+def aed(x: float | int) -> str:
     try:
         return f"{AED} {int(round(x)):,}"
     except Exception:
         return f"{AED} {x}"
 
-def colored_amount(amount: int, role: str) -> str:
-    color = COLORS.get(role, "#111827")
-    return f"<span style='color:{color}; font-weight:700'>{aed(amount)}</span>"
-
-# ---------- Core split with per-person weights ----------
-# Veterans: weight = hours_factor*1.0
-# Rookies : weight = hours_factor*(1 - d)
-def compute_split_per_person(paying, total, discount_pct):
+def compute_category_split(num_vet: int, num_rook: int, total: float, discount_pct: float):
     """
-    paying: list of dicts {name, role in {"vet","rookie"}, hours in {1,2}}
-    total: AED total for the 2h game
-    discount_pct: rookies discount (0..99)
+    num_vet  : number of veterans
+    num_rook : number of rookies
+    total    : total court price (AED)
+    discount_pct : rookie discount (0..99)
+
+    Returns:
+      - amount per veteran
+      - amount per rookie
+      - total paid after rounding
+      - delta vs target total
+      - normalized discount (0..0.99)
     """
     P = max(0.0, float(total))
-    d = min(0.99, max(0.0, float(discount_pct) / 100.0))
+    d = min(0.99, max(0.0, discount_pct / 100.0))
 
-    weights = []
-    W = 0.0
-    for p in paying:
-        hf = 1.0 if p["hours"] == 2 else 0.5
-        if p["role"] == "vet":
-            w = hf * 1.0
-        else:  # rookie (includes former juniors)
-            w = hf * (1.0 - d)
-        weights.append(w)
-        W += w
+    if P == 0 or (num_vet == 0 and num_rook == 0):
+        return 0, 0, 0, 0, d
 
-    if W <= 0.0 or P <= 0.0:
-        return {
-            "per_person": {p["name"]: 0 for p in paying},
-            "W": W, "sum": 0, "P": int(round(P)), "d": d,
-            "delta": 0, "raw": [], "weights": weights
-        }
+    # Weights: 1 for veteran, (1 - d) for rookie
+    W = num_vet * 1.0 + num_rook * (1.0 - d)
+    if W <= 0:
+        return 0, 0, 0, 0, d
 
-    # Raw shares
-    raw = [P * w / W for w in weights]
+    base_share = P / W
+    raw_vet = base_share * 1.0
+    raw_rook = base_share * (1.0 - d)
 
-    # Favor rookies in rounding (vets up, rooks down)
-    base = [math.ceil(r) if p["role"] == "vet" else math.floor(r) for p, r in zip(paying, raw)]
+    # Rounding: favor rookies → vets up, rookies down
+    per_vet = math.ceil(raw_vet) if num_vet > 0 else 0
+    per_rook = math.floor(raw_rook) if num_rook > 0 else 0
 
-    sum_base = int(sum(base))
-    delta = int(round(P - sum_base))
+    paid_total = num_vet * per_vet + num_rook * per_rook
+    delta = int(round(P - paid_total))
 
-    # ±1 distribution to hit exact total (vets first, then rooks). Deterministic order.
-    adj = [0] * len(base)
-    if delta > 0:
-        for i, p in enumerate(paying):
-            if delta == 0: break
-            if p["role"] == "vet":
-                adj[i] += 1; delta -= 1
-        for i, p in enumerate(paying):
-            if delta == 0: break
-            if p["role"] == "rookie":
-                adj[i] += 1; delta -= 1
-    elif delta < 0:
-        need = -delta
-        for i, p in reversed(list(enumerate(paying))):
-            if need == 0: break
-            if p["role"] == "vet" and base[i] + adj[i] > 0:
-                adj[i] -= 1; need -= 1
-        for i, p in reversed(list(enumerate(paying))):
-            if need == 0: break
-            if p["role"] == "rookie" and base[i] + adj[i] > 0:
-                adj[i] -= 1; need -= 1
-        delta = -need
+    return per_vet, per_rook, paid_total, delta, d
 
-    final = [int(b + a) for b, a in zip(base, adj)]
-    out = {p["name"]: v for p, v in zip(paying, final)}
-    return {
-        "per_person": out,
-        "W": W,
-        "sum": int(sum(final)),
-        "P": int(round(P)),
-        "d": d,
-        "delta": int(round(P - sum(final))),
-        "raw": raw,
-        "weights": weights,
-    }
+# ---------- Inputs ----------
+st.subheader("⚙️ Game parameters")
 
-# ---------- Sidebar: Game setup ----------
-with st.sidebar:
-    st.header("⚙️ Game Setup (2h basis)")
+colA, colB = st.columns(2)
+with colA:
     game_total = st.number_input(
-        "💰 Game total for 2 hours (AED)",
-        min_value=0.0, step=10.0, value=300.0, key="game_total"
+        "💰 Total court price (2h, AED)",
+        min_value=0.0,
+        step=10.0,
+        value=300.0,
+        format="%.1f",
     )
+with colB:
     d_pct = st.number_input(
-        "🏷️ Discount for Rookies (%)",
-        min_value=0.0, max_value=99.0, step=5.0, value=30.0, key="d_pct"
+        "🏷️ Discount for rookies (%)",
+        min_value=0.0,
+        max_value=99.0,
+        step=5.0,
+        value=30.0,
     )
 
-    st.markdown("---")
-    st.subheader("👥 Participants & duration")
-    st.caption("Choose **1h** or **2h** for each. Rookies (incl. former juniors) pay with the discount.")
-
-    # Veterans
-    st.markdown("**Veterans**")
-    vets = []
-    for name in VETERANS:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            sel = st.checkbox(f"🛡️ {name}", key=f"v_sel_{name}", value=name in VETERANS[:2])
-        with col2:
-            hrs = st.selectbox("hrs", [2, 1], index=0, key=f"v_hrs_{name}", label_visibility="collapsed")
-        if sel:
-            vets.append({"name": name, "role": "vet", "hours": int(hrs)})
-
-    # Rookies (includes former juniors)
-    st.markdown("**Rookies (incl. former Juniors)**")
-    rooks = []
-    for name in ROOKIES:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            sel = st.checkbox(f"🌱 {name}", key=f"r_sel_{name}", value=(name == "Layth"))
-        with col2:
-            hrs = st.selectbox("hrs", [2, 1], index=0, key=f"r_hrs_{name}", label_visibility="collapsed")
-        if sel:
-            rooks.append({"name": name, "role": "rookie", "hours": int(hrs)})
-
-# ---------- Build paying list ----------
-paying = vets + rooks
+colC, colD = st.columns(2)
+with colC:
+    num_vet = st.number_input(
+        "🛡️ Number of veterans",
+        min_value=0,
+        step=1,
+        value=2,
+    )
+with colD:
+    num_rook = st.number_input(
+        "🌱 Number of rookies",
+        min_value=0,
+        step=1,
+        value=2,
+    )
 
 # ---------- Compute ----------
-res = compute_split_per_person(paying=paying, total=game_total, discount_pct=d_pct)
-per_person = res["per_person"]
-paid_total = res["sum"]
+per_vet, per_rook, paid_total, delta, d = compute_category_split(
+    num_vet=num_vet,
+    num_rook=num_rook,
+    total=game_total,
+    discount_pct=d_pct,
+)
 
-# ---------- Single Tab: Current Game ----------
-st.subheader("📊 Per-person amounts — integers in AED")
-cA, cB, cC = st.columns(3)
-cA.metric("🧾 Paid total",            aed(paid_total))
-cB.metric("🎯 Target total (2h game)", aed(res["P"]))
-cC.metric("Δ after rounding",         f"{res['delta']}")
+st.markdown("---")
+st.subheader("📊 Category results")
 
-st.markdown("### 👤 Payments by participant")
-if len(paying) == 0:
-    st.info("Select at least one Veteran or Rookie to compute payments.")
+# Metrics
+c1, c2, c3 = st.columns(3)
+c1.metric("🎯 Target total", aed(game_total))
+c2.metric("🧾 Paid total (rounded)", aed(paid_total))
+c3.metric("Δ (rounding)", f"{delta} {AED}")
+
+# Detail by category
+st.markdown("### 👥 Amount per player")
+
+if num_vet == 0 and num_rook == 0:
+    st.info("Select at least 1 veteran or 1 rookie to compute.")
 else:
-    # Veterans (blue)
-    for v in vets:
-        amount_html = colored_amount(per_person.get(v['name'], 0), "vet")
-        st.markdown(f"🛡️ **{v['name']}** — {v['hours']}h: {amount_html}", unsafe_allow_html=True)
+    col_v, col_r = st.columns(2)
 
-    # Rookies (green)
-    for r in rooks:
-        amount_html = colored_amount(per_person.get(r['name'], 0), "rookie")
-        st.markdown(f"🌱 **{r['name']}** — {r['hours']}h: {amount_html}", unsafe_allow_html=True)
+    with col_v:
+        st.markdown("#### 🛡️ Veterans")
+        st.markdown(f"- Count: **{num_vet}**")
+        st.markdown(f"- Amount per veteran: **{aed(per_vet)}**")
+        st.markdown(f"- Total veterans: **{aed(num_vet * per_vet)}**")
 
-# Footer
-st.caption("✅ Simplified version: no history/statistics. Rookies include former juniors and pay with discount; rounding favors rookies.")
+    with col_r:
+        st.markdown("#### 🌱 Rookies")
+        st.markdown(f"- Count: **{num_rook}**")
+        st.markdown(f"- Amount per rookie: **{aed(per_rook)}**")
+        st.markdown(f"- Total rookies: **{aed(num_rook * per_rook)}**")
+
+# ---------- WhatsApp summary (English) ----------
+st.markdown("---")
+st.subheader("📲 WhatsApp summary (English)")
+
+if num_vet == 0 and num_rook == 0:
+    st.info("Set at least one player to generate the summary.")
+else:
+    summary_lines = []
+
+    summary_lines.append("Padel game payment recap:")
+    summary_lines.append(f"- Total court price (2h): {aed(game_total)}")
+    summary_lines.append("")
+    summary_lines.append(f"- Veterans: {num_vet} player(s), each pays {aed(per_vet)} "
+                         f"(total {aed(num_vet * per_vet)})")
+    summary_lines.append(f"- Rookies: {num_rook} player(s), each pays {aed(per_rook)} "
+                         f"(total {aed(num_rook * per_rook)})")
+    summary_lines.append("")
+    summary_lines.append(f"- Rookie discount: {d_pct:.0f}%")
+    summary_lines.append(f"- Total collected: {aed(paid_total)} "
+                         f"(target {aed(game_total)}, delta {delta} {AED})")
+
+    summary_text = "\n".join(summary_lines)
+
+    st.code(summary_text, language="text")
+
+st.caption(
+    "Règle : les rookies ont une réduction. Le partage est pondéré par cette réduction, "
+    "puis arrondi en AED entiers : les vétérans sont arrondis vers le haut, les rookies vers le bas."
+)
